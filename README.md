@@ -1,4 +1,4 @@
-# PBL-2
+# PBL3-Blockchain
 
 ## Descrição do Projeto
 
