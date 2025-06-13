@@ -50,7 +50,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - /home/tec502/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+      - /home/tec502/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations 
     networks:
       - fabric_test_net
 
@@ -76,7 +76,7 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - /home/tec502/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+      - /home/tec502/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 
@@ -102,7 +102,7 @@ services:
     ports:
       - "8083:8083"
     volumes:
-      - /home/tec502/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+      - /home/tec502/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 
