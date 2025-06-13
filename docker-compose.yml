@@ -1,0 +1,201 @@
+version: '3.8'
+
+# Define que vamos usar uma rede que já existe no Docker
+networks:
+  fabric_test_net: # Dê um nome lógico aqui
+    external:
+      name: fabric-samples_test-network # <-- COLOQUE O NOME EXATO DA SUA REDE AQUI
+
+services:
+  # -------------------------------------------
+  # SERVIÇOS DA APLICAÇÃO
+  # -------------------------------------------
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: mosquitto
+    ports:
+      - "1883:1883"
+    networks:
+      - fabric_test_net # Conecta o serviço à rede da Fabric
+
+  registry:
+    build:
+      context: .
+      dockerfile: ./registry/Dockerfile
+    container_name: registry
+    ports:
+      - "9000:9000"
+    networks:
+      - fabric_test_net
+
+  solatlantico:
+    build:
+      context: .
+      dockerfile: ./api/Dockerfile
+    container_name: SolAtlantico
+    depends_on: [registry, mosquitto]
+    environment:
+      - ENTERPRISE_NAME=SolAtlantico
+      - ENTERPRISE_PORT=8080
+      - OWNED_CITY=Salvador
+      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
+      - REGISTRY_URL=http://registry:9000
+      - MQTT_BROKER=tcp://mosquitto:1883
+    ports:
+      - "8080:8080"
+    volumes:
+      - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+    networks:
+      - fabric_test_net
+
+  sertaocarga:
+    build:
+      context: .
+      dockerfile: ./api/Dockerfile
+    container_name: SertaoCarga
+    depends_on: [registry, mosquitto]
+    environment:
+      - ENTERPRISE_NAME=SertaoCarga
+      - ENTERPRISE_PORT=8081
+      - OWNED_CITY=Feira de Santana
+      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
+      - REGISTRY_URL=http://registry:9000
+      - MQTT_BROKER=tcp://mosquitto:1883
+    ports:
+      - "8081:8081"
+    volumes:
+      - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+    networks:
+      - fabric_test_net
+
+  cacaupower:
+    build:
+      context: .
+      dockerfile: ./api/Dockerfile
+    container_name: CacauPower
+    depends_on: [registry, mosquitto]
+    environment:
+      - ENTERPRISE_NAME=CacauPower
+      - ENTERPRISE_PORT=8083
+      - OWNED_CITY=Ilheus
+      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
+      - REGISTRY_URL=http://registry:9000
+      - MQTT_BROKER=tcp://mosquitto:1883
+    ports:
+      - "8083:8083"
+    volumes:
+      - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+    networks:
+      - fabric_test_net
+
+  solatlantico-cp001:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile # Caminho para o Dockerfile do worker
+    container_name: solatlantico-cp001
+    depends_on:
+      - mosquitto
+      - solatlantico
+    environment:
+      - WORKER_ID=CP001
+      - ENTERPRISE_NAME=SolAtlantico
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net # Mesma rede dos outros serviços
+
+  solatlantico-cp002:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: solatlantico-cp002
+    depends_on:
+      - mosquitto
+      - solatlantico
+    environment:
+      - WORKER_ID=CP002
+      - ENTERPRISE_NAME=SolAtlantico
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  sertaocarga-cp001:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: sertaocarga-cp001
+    depends_on:
+      - mosquitto
+      - sertaocarga
+    environment:
+      - WORKER_ID=CP001
+      - ENTERPRISE_NAME=SertaoCarga
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  sertaocarga-cp002:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: sertaocarga-cp002
+    depends_on:
+      - mosquitto
+      - sertaocarga
+    environment:
+      - WORKER_ID=CP002
+      - ENTERPRISE_NAME=SertaoCarga
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  cacaupower-cp001:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: cacaupower-cp001
+    depends_on:
+      - mosquitto
+      - cacaupower
+    environment:
+      - WORKER_ID=CP001
+      - ENTERPRISE_NAME=CacauPower
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  cacaupower-cp002:
+    build:
+      context: .
+      dockerfile: ./cpworker/Dockerfile
+    container_name: cacaupower-cp002
+    depends_on:
+      - mosquitto
+      - cacaupower
+    environment:
+      - WORKER_ID=CP002
+      - ENTERPRISE_NAME=CacauPower
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  listenterprises:
+    build:
+      context: .
+      dockerfile: ./listEnterprises/Dockerfile
+    container_name: listenterprises
+    depends_on: [mosquitto]
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net
+
+  car1:
+    build:
+      context: .
+      dockerfile: ./car/Dockerfile
+    container_name: car1
+    depends_on: [mosquitto]
+    environment:
+      - MQTT_BROKER=tcp://mosquitto:1883
+    networks:
+      - fabric_test_net

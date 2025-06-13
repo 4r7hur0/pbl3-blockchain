@@ -1,0 +1,84 @@
+docker run -d --name mosquitto --network rede-overlay -p 1883:1883 -v /home/tec502/PBL-2/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf eclipse-mosquitto
+
+Em caso de erro verificar o diretório.
+No laboratorio trocar user por tec502.
+
+para parar:
+docker stop mosquitto
+
+para iniciar:
+docker start mosquitto
+
+para excluir: 
+docker rm mosquitto
+
+
+# Pare e remova qualquer contêiner antigo
+docker stop SolAtlantico
+docker rm SolAtlantico
+
+# Execute o comando com o caminho do volume corrigido
+docker run -d \
+  --name SolAtlantico \
+  --network fabric_test \
+  -p 8080:8080 \
+  \
+  -e "ENTERPRISE_NAME=SolAtlantico" \
+  -e "ENTERPRISE_PORT=8080" \
+  -e "OWNED_CITY=Salvador" \
+  -e "POSTS_QUANTITY=2" \
+  -e "REGISTRY_URL=http://registry:9000" \
+  -e "FABRIC_MSP_ID=Org1MSP" \
+  -e "FABRIC_PEER_ENDPOINT=peer0.org1.example.com:7051" \
+  -e "FABRIC_PEER_HOSTNAME=peer0.org1.example.com" \
+  -e "FABRIC_TLS_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" \
+  -e "FABRIC_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/cert.pem" \
+  -e "FABRIC_KEY_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore" \
+  \
+  -v /home/user/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations \
+  \
+  api:latest
+
+  docker run -d \
+  --name SertaoCarga \
+  --network fabric_test \
+  -p 8081:8081 \
+  \
+  -e "ENTERPRISE_NAME=SertaoCarga" \
+  -e "ENTERPRISE_PORT=8081" \
+  -e "OWNED_CITY=Feira de Santana" \
+  -e "POSTS_QUANTITY=5" \
+  -e "REGISTRY_URL=http://registry:9000" \
+  \
+  -e "FABRIC_MSP_ID=Org1MSP" \
+  -e "FABRIC_PEER_ENDPOINT=peer0.org1.example.com:7051" \
+  -e "FABRIC_PEER_HOSTNAME=peer0.org1.example.com" \
+  -e "FABRIC_TLS_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" \
+  -e "FABRIC_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/cert.pem" \
+  -e "FABRIC_KEY_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore" \
+  \
+  -v /home/user/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations \
+  \
+  api:latest
+
+  docker run -d \
+  --name CacauPower \
+  --network fabric_test \
+  -p 8083:8083 \
+  \
+  -e "ENTERPRISE_NAME=CacauPower" \
+  -e "ENTERPRISE_PORT=8083" \
+  -e "OWNED_CITY=Ilheus" \
+  -e "POSTS_QUANTITY=2" \
+  -e "REGISTRY_URL=http://registry:9000" \
+  \
+  -e "FABRIC_MSP_ID=Org1MSP" \
+  -e "FABRIC_PEER_ENDPOINT=peer0.org1.example.com:7051" \
+  -e "FABRIC_PEER_HOSTNAME=peer0.org1.example.com" \
+  -e "FABRIC_TLS_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt" \
+  -e "FABRIC_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/cert.pem" \
+  -e "FABRIC_KEY_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore" \
+  \
+  -v /home/user/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations \
+  \
+  api:latest
