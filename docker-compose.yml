@@ -1,10 +1,8 @@
-version: '3.8'
-
 # Define que vamos usar uma rede que já existe no Docker
 networks:
-  fabric_test_net: # Dê um nome lógico aqui
-    external:
-      name: fabric-samples_test-network # <-- COLOQUE O NOME EXATO DA SUA REDE AQUI
+  fabric_test_net: 
+      external: true 
+      name: fabric_test # <-- COLOQUE O NOME EXATO DA REDE DO HYPERLADGER
 
 services:
   # -------------------------------------------
@@ -14,9 +12,11 @@ services:
     image: eclipse-mosquitto:latest
     container_name: mosquitto
     ports:
-      - "1883:1883"
+      - "1884:1883"
     networks:
       - fabric_test_net # Conecta o serviço à rede da Fabric
+    volumes:
+      - /home/tec502/pbl3-blockchain/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
 
   registry:
     build:
@@ -38,13 +38,19 @@ services:
       - ENTERPRISE_NAME=SolAtlantico
       - ENTERPRISE_PORT=8080
       - OWNED_CITY=Salvador
-      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
+      - CP_WORKER_IDS=CP001,CP002
       - REGISTRY_URL=http://registry:9000
       - MQTT_BROKER=tcp://mosquitto:1883
+      - FABRIC_MSP_ID=Org1MSP
+      - FABRIC_PEER_ENDPOINT=peer0.org1.example.com:7051
+      - FABRIC_PEER_HOSTNAME=peer0.org1.example.com
+      - FABRIC_TLS_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      - FABRIC_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/cert.pem
+      - FABRIC_KEY_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore
     ports:
       - "8080:8080"
     volumes:
-      - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+      - /home/tec502/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 
@@ -58,13 +64,19 @@ services:
       - ENTERPRISE_NAME=SertaoCarga
       - ENTERPRISE_PORT=8081
       - OWNED_CITY=Feira de Santana
-      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
+      - CP_WORKER_IDS=CP001,CP002
       - REGISTRY_URL=http://registry:9000
       - MQTT_BROKER=tcp://mosquitto:1883
+      - FABRIC_MSP_ID=Org1MSP
+      - FABRIC_PEER_ENDPOINT=peer0.org1.example.com:7051
+      - FABRIC_PEER_HOSTNAME=peer0.org1.example.com
+      - FABRIC_TLS_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      - FABRIC_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/cert.pem
+      - FABRIC_KEY_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore
     ports:
       - "8081:8081"
     volumes:
-      - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+      - /home/tec502/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 
@@ -78,20 +90,26 @@ services:
       - ENTERPRISE_NAME=CacauPower
       - ENTERPRISE_PORT=8083
       - OWNED_CITY=Ilheus
-      - CP_WORKER_IDS=CP001,CP002  # <-- ALTERADO
+      - CP_WORKER_IDS=CP001,CP002
       - REGISTRY_URL=http://registry:9000
       - MQTT_BROKER=tcp://mosquitto:1883
+      - FABRIC_MSP_ID=Org1MSP
+      - FABRIC_PEER_ENDPOINT=peer0.org1.example.com:7051
+      - FABRIC_PEER_HOSTNAME=peer0.org1.example.com
+      - FABRIC_TLS_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/peers/peer0.org1.example.com/tls/ca.crt
+      - FABRIC_CERT_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/signcerts/cert.pem
+      - FABRIC_KEY_PATH=/etc/hyperledger/fabric/organizations/peerOrganizations/org1.example.com/users/User1@org1.example.com/msp/keystore
     ports:
       - "8083:8083"
     volumes:
-      - /caminho/para/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
+      - /home/tec502/fabric-samples/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 
   solatlantico-cp001:
     build:
       context: .
-      dockerfile: ./cpworker/Dockerfile # Caminho para o Dockerfile do worker
+      dockerfile: ./cpworker/Dockerfile
     container_name: solatlantico-cp001
     depends_on:
       - mosquitto
@@ -101,7 +119,7 @@ services:
       - ENTERPRISE_NAME=SolAtlantico
       - MQTT_BROKER=tcp://mosquitto:1883
     networks:
-      - fabric_test_net # Mesma rede dos outros serviços
+      - fabric_test_net
 
   solatlantico-cp002:
     build:
