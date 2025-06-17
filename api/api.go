@@ -379,9 +379,56 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 	r.GET("/transactions/:id", handleGetTransactionDetails)
 	r.POST("/ping", handlePing)
 	r.GET("/ping", handleQueryPing)
+
+	r.POST("/transactions/:id/register-payment", handleRegisterPayment)
 }
 
 // Handlers para os endpoints /2pc_remote/* (podem ficar aqui ou em um arquivo separado)
+
+func handleRegisterPayment(c *gin.Context) {
+	// 1. Obter o ID da transação a partir da URL
+	transactionID := c.Param("id")
+	if transactionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID da transação não fornecido"})
+		return
+	}
+
+	log.Printf("Recebida requisição para REGISTRAR PAGAMENTO para a TX %s.", transactionID)
+
+	// 2. Conectar ao Gateway da Fabric
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("Erro ao conectar ao gateway da Fabric: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao conectar na rede blockchain"})
+		return
+	}
+	defer gw.Close()
+
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
+
+	// 3. Submeter a transação "RegisterPayment" para o chaincode
+	log.Printf("Submetendo transação 'RegisterPayment' para a TX %s...", transactionID)
+	_, err = contract.SubmitTransaction("RegisterPayment", transactionID)
+	if err != nil {
+		// O erro vindo do chaincode será retornado aqui (ex: "transaction is not in COMPLETED status")
+		log.Printf("Erro ao submeter 'RegisterPayment' para a TX %s: %v", transactionID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "Falha ao executar a transação na blockchain",
+			"details": err.Error(),
+		})
+		return
+	}
+
+	log.Printf("SUCESSO - Pagamento da TX %s registrado na blockchain.", transactionID)
+
+	// 4. Retornar uma resposta de sucesso
+	c.JSON(http.StatusOK, gin.H{
+		"status":         "success",
+		"transaction_id": transactionID,
+		"message":        "Pagamento registrado com sucesso.",
+	})
+}
 
 func handleSegmentCompletion(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var payload schemas.CostUpdatePayload
