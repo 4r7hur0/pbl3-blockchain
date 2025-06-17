@@ -390,50 +390,13 @@ func handleSegmentCompletion(c *gin.Context, sm *state.StateManager, localEntNam
 		return
 	}
 
-	log.Printf("[%s] TX[%s]: Recebido relatório de conclusão do segmento '%s'", localEntName, payload.TransactionID, payload.SegmentCity)
+	log.Printf("[%s] TX[%s]: Recebido relatório de conclusão do segmento '%s' via HTTP", localEntName, payload.TransactionID, payload.SegmentCity)
 
-	// Grava o progresso e verifica se a transação terminou
 	allDone, totalCost := sm.RecordSegmentCompletion(payload)
 
 	if allDone {
-		log.Printf("[%s] TX[%s]: Transação completa. A submeter o estado final à blockchain...", localEntName, payload.TransactionID)
-
-		// Se tudo terminou, chama EndCharging com os totais
-		costStr := fmt.Sprintf("%.2f", totalCost)
-		energyConsumedStr := "0.0" // Pode calcular a energia total se a tiver
-
-		gw, err := newGateway()
-		if err != nil {
-			log.Printf("[%s] TX[%s]: ERRO FINAL ao conectar ao Gateway para 'EndCharging': %v", localEntName, payload.TransactionID, err)
-			// Informa que o relatório foi recebido, mas o coordenador teve um problema interno.
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "segment report received, but coordinator failed to contact blockchain"})
-			return
-		}
-		defer gw.Close()
-
-		network := gw.GetNetwork(fabricChannelName)
-		contract := network.GetContract(fabricChaincodeName)
-
-		_, err = contract.SubmitTransaction("EndCharging", payload.TransactionID, costStr, energyConsumedStr)
-		if err != nil {
-			log.Printf("[%s] TX[%s]: ERRO FINAL ao submeter 'EndCharging': %v", localEntName, payload.TransactionID, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "falha ao finalizar transação na blockchain", "details": err.Error()})
-			return
-		} else {
-			log.Printf("[%s] TX[%s]: SUCESSO FINAL. Transação finalizada na blockchain.", localEntName, payload.TransactionID)
-
-			vehicleID, found := sm.GetVehicleIDForTransaction(payload.TransactionID)
-			if found {
-				finishTopic := fmt.Sprintf("car/journey/finished/%s", vehicleID)
-				finishPayload := fmt.Sprintf(`{"status":"completed", "transaction_id":"%s", "message":"Seu trajeto foi concluído com sucesso!"}`, payload.TransactionID)
-
-				mqtt.Publish(finishTopic, finishPayload) // Usando a função de publish do seu pacote MQTT
-
-				log.Printf("[%s] TX[%s]: Mensagem de finalização de trajeto enviada para o veículo %s no tópico %s", localEntName, payload.TransactionID, vehicleID, finishTopic)
-			} else {
-				log.Printf("[%s] TX[%s]: AVISO - Não foi possível encontrar o VehicleID para notificar o fim do trajeto.", localEntName, payload.TransactionID)
-			}
-		}
+		// Chame a função unificada!
+		go finalizeJourney(sm, payload.TransactionID, totalCost, localEntName)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "segment report received"})
@@ -713,41 +676,49 @@ func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity 
 
 func handleSegmentCompletionLocal(sm *state.StateManager, localEntName string, payload schemas.CostUpdatePayload) {
 	log.Printf("[%s] TX[%s]: Recebido relatório de conclusão do segmento LOCAL '%s'", localEntName, payload.TransactionID, payload.SegmentCity)
+
 	allDone, totalCost := sm.RecordSegmentCompletion(payload)
 
 	if allDone {
-		log.Printf("[%s] TX[%s]: Transação completa (via evento local). A submeter o estado final à blockchain...", localEntName, payload.TransactionID)
-		costStr := fmt.Sprintf("%.2f", totalCost)
-		energyConsumedStr := "0.0"
+		// Chame a mesma função unificada!
+		go finalizeJourney(sm, payload.TransactionID, totalCost, localEntName)
+	}
+}
 
-		gw, err := newGateway()
-		if err != nil {
-			log.Printf("[%s] TX[%s]: ERRO (LOCAL) ao conectar ao Gateway para 'EndCharging': %v", localEntName, payload.TransactionID, err)
-			return
-		}
-		defer gw.Close()
+func finalizeJourney(sm *state.StateManager, transactionID string, totalCost float64, enterpriseName string) {
+	log.Printf("[%s] TX[%s]: Finalizando jornada. Custo total: %.2f", enterpriseName, transactionID, totalCost)
 
-		network := gw.GetNetwork(fabricChannelName)
-		contract := network.GetContract(fabricChaincodeName)
+	// 1. Finalizar na Blockchain
+	costStr := fmt.Sprintf("%.2f", totalCost)
+	energyConsumedStr := "0.0" // Pode ser ajustado se tiver essa info
 
-		_, err = contract.SubmitTransaction("EndCharging", payload.TransactionID, costStr, energyConsumedStr)
-		if err != nil {
-			log.Printf("[%s] TX[%s]: ERRO (LOCAL) ao submeter 'EndCharging': %v", localEntName, payload.TransactionID, err)
-		} else {
-			log.Printf("[%s] TX[%s]: SUCESSO (LOCAL). Transação finalizada na blockchain.", localEntName, payload.TransactionID)
+	gw, err := newGateway()
+	if err != nil {
+		log.Printf("[%s] TX[%s]: ERRO FINAL ao conectar ao Gateway para 'EndCharging': %v", enterpriseName, transactionID, err)
+		return
+	}
+	defer gw.Close()
 
-			vehicleID, found := sm.GetVehicleIDForTransaction(payload.TransactionID)
-			if found {
-				finishTopic := fmt.Sprintf("car/journey/finished/%s", vehicleID)
-				finishPayload := fmt.Sprintf(`{"status":"completed", "transaction_id":"%s", "message":"Seu trajeto foi concluído com sucesso!"}`, payload.TransactionID)
+	network := gw.GetNetwork(fabricChannelName)
+	contract := network.GetContract(fabricChaincodeName)
 
-				mqtt.Publish(finishTopic, finishPayload) // Usando a função de publish do seu pacote MQTT
+	_, err = contract.SubmitTransaction("EndCharging", transactionID, costStr, energyConsumedStr)
+	if err != nil {
+		log.Printf("[%s] TX[%s]: ERRO FINAL ao submeter 'EndCharging': %v", enterpriseName, transactionID, err)
+		// Mesmo com erro na blockchain, ainda tentamos notificar o carro.
+	} else {
+		log.Printf("[%s] TX[%s]: SUCESSO FINAL. Transação finalizada na blockchain.", enterpriseName, transactionID)
+	}
 
-				log.Printf("[%s] TX[%s]: Mensagem de finalização de trajeto enviada para o veículo %s no tópico %s", localEntName, payload.TransactionID, vehicleID, finishTopic)
-			} else {
-				log.Printf("[%s] TX[%s]: AVISO - Não foi possível encontrar o VehicleID para notificar o fim do trajeto.", localEntName, payload.TransactionID)
-			}
-		}
+	// 2. Notificar o Carro (lógica que já implementamos antes)
+	vehicleID, found := sm.GetVehicleIDForTransaction(transactionID)
+	if found {
+		finishTopic := fmt.Sprintf("car/journey/finished/%s", vehicleID)
+		finishPayload := fmt.Sprintf(`{"status":"completed", "transaction_id":"%s", "message":"Seu trajeto foi concluído com sucesso!"}`, transactionID)
 
+		mqtt.Publish(finishTopic, finishPayload)
+		log.Printf("[%s] TX[%s]: Mensagem de finalização de trajeto enviada para o veículo %s.", enterpriseName, transactionID, vehicleID)
+	} else {
+		log.Printf("[%s] TX[%s]: AVISO - Não foi possível encontrar o VehicleID para notificar o fim do trajeto.", enterpriseName, transactionID)
 	}
 }

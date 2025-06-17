@@ -100,17 +100,23 @@ func main() {
 		fmt.Println("Waiting for response...")
 		// Wait for a response from the MQTT broker
 		// This is a blocking call, so it will wait until a message is received
-	RETRY_ROUTE:
 		response := <-responseChannel
-		if len(response.Routes) == 0 {
-			fmt.Println("No route available. Retrying in 5 seconds...")
-			time.Sleep(5 * time.Second)
-			goto RETRY_ROUTE
+		var validRoutes [][]schemas.RouteSegment
+		for _, route := range response.Routes {
+			if len(route) > 1 {
+				validRoutes = append(validRoutes, route)
+			}
 		}
 
+		// Verifica se, após o filtro, restou alguma rota válida
+		if len(validRoutes) == 0 {
+			log.Println("AVISO: Nenhuma rota com mais de um segmento foi oferecida pela API. Tentando novamente...")
+			time.Sleep(10 * time.Second) // Espera um pouco antes de tentar de novo
+			continue                     // Pula para a próxima iteração do loop, reiniciando o processo
+		}
 		rand.Seed(time.Now().UnixNano())
-		randomIndex := rand.Intn(len(response.Routes))
-		selectedRoute := response.Routes[randomIndex]
+		randomIndex := rand.Intn(len(validRoutes))
+		selectedRoute := validRoutes[randomIndex]
 		fmt.Println("\nChoose route:")
 		if len(selectedRoute) == 0 {
 			fmt.Println("  No route segments provided.")

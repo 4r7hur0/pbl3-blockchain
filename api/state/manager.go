@@ -128,25 +128,25 @@ func (m *StateManager) attemptToPrepareWorker(transactionID string, window schem
 			var resp map[string]interface{}
 			if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
 				log.Printf("[StateManager-%s] TX[%s]: Erro ao decodificar resposta de PREPARE do worker '%s': %v", m.ownedCity, transactionID, workerID, err)
-				mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de continuar
-				continue                        // Tenta o próximo worker
+				mqtt.Unsubscribe(responseTopic)
+				continue // Tenta o próximo worker
 			}
 
 			// Verifica se o worker respondeu com sucesso
 			if success, ok := resp["success"].(bool); ok && success {
 				log.Printf("[StateManager-%s] TX[%s]: SUCESSO! Worker '%s' preparado.", m.ownedCity, transactionID, workerID)
-				mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de retornar
-				return workerID, nil            // Sucesso! Retorna o ID do worker e encerra a função.
+				mqtt.Unsubscribe(responseTopic)
+				return workerID, nil // Sucesso! Retorna o ID do worker e encerra a função.
 			} else {
 				log.Printf("[StateManager-%s] TX[%s]: Worker '%s' respondeu com falha (provavelmente ocupado).", m.ownedCity, transactionID, workerID)
-				mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de continuar
-				continue                        // Continua para tentar o próximo worker
+				mqtt.Unsubscribe(responseTopic)
+				continue // Continua para tentar o próximo worker
 			}
 
 		case <-time.After(5 * time.Second): // Timeout para a resposta
 			log.Printf("[StateManager-%s] TX[%s]: Timeout esperando resposta de PREPARE do worker '%s'", m.ownedCity, transactionID, workerID)
-			mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de continuar
-			continue                        // Continua para tentar o próximo worker
+			mqtt.Unsubscribe(responseTopic)
+			continue // Continua para tentar o próximo worker
 		}
 	}
 
