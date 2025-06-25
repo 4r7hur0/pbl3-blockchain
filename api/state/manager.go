@@ -108,7 +108,10 @@ func (m *StateManager) attemptToPrepareWorker(transactionID string, window schem
 		// Cria um tópico de resposta único para esta tentativa específica
 		responseTopic := fmt.Sprintf("enterprise/%s/cp/%s/response/%s", m.enterpriseName, workerID, uuid.New().String())
 
-		// Monta a mensagem de preparação
+		// Prepara para escutar a resposta
+		respChan := mqtt.StartListening(responseTopic, 1)
+
+		// Monta e publica a mensagem de preparação
 		prepareMsg := map[string]interface{}{
 			"command":        "PREPARE_RESERVE_WINDOW",
 			"window":         window,
@@ -117,11 +120,6 @@ func (m *StateManager) attemptToPrepareWorker(transactionID string, window schem
 		}
 		prepareBytes, _ := json.Marshal(prepareMsg)
 		commandTopic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
-
-		// Prepara para escutar a resposta
-		respChan := mqtt.StartListening(responseTopic, 1) // Buffer de 1 é suficiente
-
-		// Publica a tentativa de preparação
 		mqtt.Publish(commandTopic, string(prepareBytes))
 
 		// Aguarda a resposta do worker ou um timeout
@@ -130,24 +128,26 @@ func (m *StateManager) attemptToPrepareWorker(transactionID string, window schem
 			var resp map[string]interface{}
 			if err := json.Unmarshal([]byte(respPayload), &resp); err != nil {
 				log.Printf("[StateManager-%s] TX[%s]: Erro ao decodificar resposta de PREPARE do worker '%s': %v", m.ownedCity, transactionID, workerID, err)
-				continue // Tenta o próximo worker
+				mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de continuar
+				continue                        // Tenta o próximo worker
 			}
 
 			// Verifica se o worker respondeu com sucesso
 			if success, ok := resp["success"].(bool); ok && success {
 				log.Printf("[StateManager-%s] TX[%s]: SUCESSO! Worker '%s' preparado.", m.ownedCity, transactionID, workerID)
-				// TODO: Parar de escutar no tópico de resposta (unsubscribe) para limpar recursos.
-				return workerID, nil // Sucesso! Retorna o ID do worker e encerra o loop.
+				mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de retornar
+				return workerID, nil            // Sucesso! Retorna o ID do worker e encerra a função.
 			} else {
 				log.Printf("[StateManager-%s] TX[%s]: Worker '%s' respondeu com falha (provavelmente ocupado).", m.ownedCity, transactionID, workerID)
-				// Continua para tentar o próximo worker
+				mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de continuar
+				continue                        // Continua para tentar o próximo worker
 			}
 
 		case <-time.After(5 * time.Second): // Timeout para a resposta
 			log.Printf("[StateManager-%s] TX[%s]: Timeout esperando resposta de PREPARE do worker '%s'", m.ownedCity, transactionID, workerID)
-			// Continua para tentar o próximo worker
+			mqtt.Unsubscribe(responseTopic) // << CORREÇÃO: Limpa antes de continuar
+			continue                        // Continua para tentar o próximo worker
 		}
-		// TODO: Parar de escutar no tópico de resposta (unsubscribe) em caso de falha/timeout.
 	}
 
 	// Se o loop terminar, nenhum worker conseguiu ser preparado.
@@ -322,4 +322,15 @@ func (m *StateManager) RecordSegmentCompletion(payload schemas.CostUpdatePayload
 	}
 
 	return false, 0
+}
+
+func (sm *StateManager) GetVehicleIDForTransaction(txID string) (string, bool) {
+	sm.cityDataMux.Lock()
+	defer sm.cityDataMux.Unlock()
+
+	details, found := sm.CoordinatedTransactions[txID]
+	if !found {
+		return "", false
+	}
+	return details.VehicleID, true
 }

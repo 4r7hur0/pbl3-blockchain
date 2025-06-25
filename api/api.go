@@ -421,6 +421,18 @@ func handleSegmentCompletion(c *gin.Context, sm *state.StateManager, localEntNam
 			return
 		} else {
 			log.Printf("[%s] TX[%s]: SUCESSO FINAL. Transação finalizada na blockchain.", localEntName, payload.TransactionID)
+
+			vehicleID, found := sm.GetVehicleIDForTransaction(payload.TransactionID)
+			if found {
+				finishTopic := fmt.Sprintf("car/journey/finished/%s", vehicleID)
+				finishPayload := fmt.Sprintf(`{"status":"completed", "transaction_id":"%s", "message":"Seu trajeto foi concluído com sucesso!"}`, payload.TransactionID)
+
+				mqtt.Publish(finishTopic, finishPayload) // Usando a função de publish do seu pacote MQTT
+
+				log.Printf("[%s] TX[%s]: Mensagem de finalização de trajeto enviada para o veículo %s no tópico %s", localEntName, payload.TransactionID, vehicleID, finishTopic)
+			} else {
+				log.Printf("[%s] TX[%s]: AVISO - Não foi possível encontrar o VehicleID para notificar o fim do trajeto.", localEntName, payload.TransactionID)
+			}
 		}
 	}
 
@@ -655,6 +667,10 @@ func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity 
 				transactionID, _ := event["transaction_id"].(string)
 				cost, _ := event["cost"].(float64)
 
+				if transactionID != "" {
+					sm.FinalizeReservation(transactionID, "charged")
+				}
+
 				isCoordinator := sm.IsCoordinator(transactionID)
 
 				costPayload := schemas.CostUpdatePayload{
@@ -719,6 +735,19 @@ func handleSegmentCompletionLocal(sm *state.StateManager, localEntName string, p
 			log.Printf("[%s] TX[%s]: ERRO (LOCAL) ao submeter 'EndCharging': %v", localEntName, payload.TransactionID, err)
 		} else {
 			log.Printf("[%s] TX[%s]: SUCESSO (LOCAL). Transação finalizada na blockchain.", localEntName, payload.TransactionID)
+
+			vehicleID, found := sm.GetVehicleIDForTransaction(payload.TransactionID)
+			if found {
+				finishTopic := fmt.Sprintf("car/journey/finished/%s", vehicleID)
+				finishPayload := fmt.Sprintf(`{"status":"completed", "transaction_id":"%s", "message":"Seu trajeto foi concluído com sucesso!"}`, payload.TransactionID)
+
+				mqtt.Publish(finishTopic, finishPayload) // Usando a função de publish do seu pacote MQTT
+
+				log.Printf("[%s] TX[%s]: Mensagem de finalização de trajeto enviada para o veículo %s no tópico %s", localEntName, payload.TransactionID, vehicleID, finishTopic)
+			} else {
+				log.Printf("[%s] TX[%s]: AVISO - Não foi possível encontrar o VehicleID para notificar o fim do trajeto.", localEntName, payload.TransactionID)
+			}
 		}
+
 	}
 }

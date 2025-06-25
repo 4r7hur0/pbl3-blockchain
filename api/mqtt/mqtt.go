@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"fmt"
+	"log"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -47,5 +48,16 @@ func Subscribe(topic string, handler mqtt.MessageHandler) {
 		fmt.Printf("Error subscribing to topic: %v\n", topic)
 	} else {
 		fmt.Printf("Subscribed to topic: %s\n", topic)
+	}
+}
+
+func Unsubscribe(topic string) {
+	if client == nil {
+		return
+	}
+	if token := client.Unsubscribe(topic); token.Wait() && token.Error() != nil {
+		log.Printf("MQTT: Erro ao cancelar subscrição do tópico %s: %v", topic, token.Error())
+	} else {
+		log.Printf("MQTT: Subscrição do tópico %s cancelada com sucesso.", topic)
 	}
 }

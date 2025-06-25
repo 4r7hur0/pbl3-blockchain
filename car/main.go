@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 	"time"
@@ -25,6 +26,7 @@ func main() {
 	// Channel to receive messages from the MQTT broker
 	responseChannel := make(chan schemas.RouteReservationOptions)
 	finalResponse := make(chan schemas.ReservationStatus)
+	journeyFinishedChan := make(chan struct{})
 
 	topic := fmt.Sprintf("car/reservation/status/%s", CarID)
 
@@ -43,6 +45,12 @@ func main() {
 	go func() {
 		// Subscribe to the topic
 		subscribeToTopic(client, "car/enterprises", messageHandler)
+	}()
+
+	go func() {
+		journeyFinishedTopic := fmt.Sprintf("car/journey/finished/%s", CarID)
+		// Passamos o canal para o handler.
+		subscribeToTopic(client, journeyFinishedTopic, handleJourneyFinished(journeyFinishedChan))
 	}()
 
 	// Go rounine for messages from topic carID
@@ -148,7 +156,14 @@ func main() {
 		fmt.Println("\nWaiting for response...")
 		finalMsg := <-finalResponse
 		fmt.Printf("Response received: %v\n", finalMsg.Message)
-		time.Sleep(5 * time.Minute)
+
+		<-journeyFinishedChan
+
+		// Esta parte do código só será executada após o sinal ser recebido.
+		log.Println("✅ Sinal de FIM DE TRAJETO recebido!")
+		log.Println("----------------------------------------------------")
+		log.Println("Preparando para iniciar um novo ciclo em 10 segundos...")
+		time.Sleep(10 * time.Second)
 	}
 
 }
