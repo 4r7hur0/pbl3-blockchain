@@ -2,19 +2,25 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
-	"sync"
-	"time"
-	"encoding/json"
 	"net/url"
 	"strings"
+	"sync"
+	"time"
 
-  "github.com/4r7hur0/PBL-2/api/mqtt"
+	"github.com/4r7hur0/PBL-2/api/mqtt"
 	"github.com/4r7hur0/PBL-2/schemas"
-	"github.com/google/uuid" 
+	"github.com/google/uuid"
 )
 
+type TransactionProgress struct {
+	TotalSegments     int
+	CompletedSegments map[string]schemas.CostUpdatePayload // Mapeia cidade -> dados do custo
+	VehicleID         string
+	mu                sync.Mutex
+}
 
 type CityState struct {
 	MaxPosts           int
@@ -22,35 +28,37 @@ type CityState struct {
 }
 
 type StateManager struct {
-	ownedCity   string 
-	cityData    *CityState
-	enterpriseName string // Nome da empresa que gerencia esta cidade
-	cityDataMux *sync.Mutex
-	myAPIURL string // URL da API que gerencia este estado
-	cpWorkerIDs []string // IDs dos workers que estão processando reservas nesta cidade
+	ownedCity               string
+	cityData                *CityState
+	enterpriseName          string
+	cityDataMux             *sync.Mutex
+	myAPIURL                string
+	cpWorkerIDs             []string
+	CoordinatedTransactions map[string]*TransactionProgress
 }
 
 func NewStateManager(ownedCity string, initialPosts int, myAPIURL string, workerIDs []string) *StateManager {
-    log.Printf("[StateManager] Inicializando para a cidade: %s com %d postos.", ownedCity, initialPosts)
+	log.Printf("[StateManager] Inicializando para a cidade: %s com %d postos.", ownedCity, initialPosts)
 
-    // Extrai o nome da empresa da URL da API (ex: http://solatlantico:8080)
-    // Esta é uma forma simples; pode ser melhorado se a URL for mais complexa.
-    var entName string
-    if u, err := url.Parse(myAPIURL); err == nil {
-        entName = strings.Split(u.Hostname(), ".")[0]
-    }
+	// Extrai o nome da empresa da URL da API (ex: http://solatlantico:8080)
+	// Esta é uma forma simples; pode ser melhorado se a URL for mais complexa.
+	var entName string
+	if u, err := url.Parse(myAPIURL); err == nil {
+		entName = strings.Split(u.Hostname(), ".")[0]
+	}
 
-    return &StateManager{
-        ownedCity:      ownedCity,
-        enterpriseName: entName, // Adicionado
-        myAPIURL:       myAPIURL,
-        cpWorkerIDs:    workerIDs, // Adicionado
-        cityData: &CityState{
-            MaxPosts:           initialPosts,
-            ActiveReservations: []schemas.ActiveReservation{},
-        },
-        cityDataMux: &sync.Mutex{},
-    }
+	return &StateManager{
+		ownedCity:      ownedCity,
+		enterpriseName: entName, // Adicionado
+		myAPIURL:       myAPIURL,
+		cpWorkerIDs:    workerIDs, // Adicionado
+		cityData: &CityState{
+			MaxPosts:           initialPosts,
+			ActiveReservations: []schemas.ActiveReservation{},
+		},
+		cityDataMux:             &sync.Mutex{},
+		CoordinatedTransactions: make(map[string]*TransactionProgress),
+	}
 }
 
 // PrepareReservation verifica e "pré-aloca" um posto na cidade gerenciada.
@@ -112,7 +120,7 @@ func (m *StateManager) attemptToPrepareWorker(transactionID string, window schem
 
 		// Prepara para escutar a resposta
 		respChan := mqtt.StartListening(responseTopic, 1) // Buffer de 1 é suficiente
-		
+
 		// Publica a tentativa de preparação
 		mqtt.Publish(commandTopic, string(prepareBytes))
 
@@ -124,7 +132,7 @@ func (m *StateManager) attemptToPrepareWorker(transactionID string, window schem
 				log.Printf("[StateManager-%s] TX[%s]: Erro ao decodificar resposta de PREPARE do worker '%s': %v", m.ownedCity, transactionID, workerID, err)
 				continue // Tenta o próximo worker
 			}
-			
+
 			// Verifica se o worker respondeu com sucesso
 			if success, ok := resp["success"].(bool); ok && success {
 				log.Printf("[StateManager-%s] TX[%s]: SUCESSO! Worker '%s' preparado.", m.ownedCity, transactionID, workerID)
@@ -156,9 +164,9 @@ func (m *StateManager) CommitReservation(transactionID string) {
 			m.cityData.ActiveReservations[i].Status = schemas.StatusReservationCommitted
 
 			// Notifica o worker específico que foi reservado!
-            if res.WorkerID != "" {
-                m.sendCommandToWorker(res.WorkerID, transactionID, "COMMIT")
-            }	
+			if res.WorkerID != "" {
+				m.sendCommandToWorker(res.WorkerID, transactionID, "COMMIT")
+			}
 
 			log.Printf("[StateManager-%s] TX[%s]: SUCESSO COMMIT. Reserva: %+v", m.ownedCity, transactionID, m.cityData.ActiveReservations[i])
 			found = true
@@ -180,8 +188,8 @@ func (m *StateManager) AbortReservation(transactionID string) {
 		if res.TransactionID == transactionID && res.Status == schemas.StatusReservationPrepared {
 
 			if res.WorkerID != "" {
-                m.sendCommandToWorker(res.WorkerID, transactionID, "ABORT")
-            }
+				m.sendCommandToWorker(res.WorkerID, transactionID, "ABORT")
+			}
 
 			log.Printf("[StateManager-%s] TX[%s]: SUCESSO ABORT. Removendo reserva: %+v", m.ownedCity, transactionID, res)
 			aborted = true
@@ -213,45 +221,17 @@ func (m *StateManager) GetCoordinatorURL(transactionID string) (string, bool) {
 
 // IsCoordinator retorna true se esta instância é a coordenadora da transação.
 func (m *StateManager) IsCoordinator(transactionID string) bool {
-    m.cityDataMux.Lock()
-    defer m.cityDataMux.Unlock()
+	m.cityDataMux.Lock()
+	defer m.cityDataMux.Unlock()
 
-    for _, res := range m.cityData.ActiveReservations {
-        if res.TransactionID == transactionID {
-            // Se a URL do coordenador for vazia ou "localhost" ou igual à URL desta instância, considere coordenador.
-            // Adapte conforme sua lógica de identificação.
-            return res.CoordinatorURL == m.myAPIURL // ou compare com sua URL real
-        }
-    }
-    return false
-}
-
-// CheckAndEndReservations verifica as reservas e envia notificações MQTT se necessário.
-func (m *StateManager) CheckAndEndReservations() {
-    m.cityDataMux.Lock()
-    defer m.cityDataMux.Unlock()
-
-    now := time.Now().UTC()
-    var keptReservations []schemas.ActiveReservation
-
-    for _, res := range m.cityData.ActiveReservations {
-        if res.Status == schemas.StatusReservationCommitted && now.After(res.ReservationWindow.EndTimeUTC) {
-            // Reserva expirou! Enviar notificação MQTT
-            endMessage := schemas.ReservationEndMessage{
-                VehicleID:     res.VehicleID,
-                TransactionID: res.TransactionID,
-                EndTimeUTC:    res.ReservationWindow.EndTimeUTC,
-                Message:       "Reserva encerrada",
-            }
-            payloadBytes, _ := json.Marshal(endMessage)
-            mqtt.Publish(fmt.Sprintf("car/reservation/end/%s", res.VehicleID), string(payloadBytes)) // Tópico específico para fim de reserva
-            log.Printf("[StateManager-%s] TX[%s]: Reserva para veículo %s encerrada. Notificação MQTT enviada.", m.ownedCity, res.TransactionID, res.VehicleID)
-        } else {
-            keptReservations = append(keptReservations, res) // Manter reservas não expiradas
-        }
-    }
-
-    m.cityData.ActiveReservations = keptReservations // Atualizar a lista de reservas
+	for _, res := range m.cityData.ActiveReservations {
+		if res.TransactionID == transactionID {
+			// Se a URL do coordenador for vazia ou "localhost" ou igual à URL desta instância, considere coordenador.
+			// Adapte conforme sua lógica de identificação.
+			return res.CoordinatorURL == m.myAPIURL // ou compare com sua URL real
+		}
+	}
+	return false
 }
 
 // GetCityAvailability - pode ser útil para um endpoint de status
@@ -265,12 +245,81 @@ func (m *StateManager) GetCityAvailability() (string, int, []schemas.ActiveReser
 }
 
 func (m *StateManager) sendCommandToWorker(workerID, transactionID, command string) {
-    msg := map[string]interface{}{
-        "command":        command,
-        "transaction_id": transactionID,
-    }
-    msgBytes, _ := json.Marshal(msg)
-    topic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
-    mqtt.Publish(topic, string(msgBytes))
-    log.Printf("[StateManager-%s] TX[%s]: Comando '%s' enviado para worker '%s'", m.ownedCity, transactionID, command, workerID)
+	msg := map[string]interface{}{
+		"command":        command,
+		"transaction_id": transactionID,
+	}
+	msgBytes, _ := json.Marshal(msg)
+	topic := fmt.Sprintf("enterprise/%s/cp/%s/command", m.enterpriseName, workerID)
+	mqtt.Publish(topic, string(msgBytes))
+	log.Printf("[StateManager-%s] TX[%s]: Comando '%s' enviado para worker '%s'", m.ownedCity, transactionID, command, workerID)
+}
+
+// FinalizeReservation atualiza o status de uma reserva para um estado final, como "charged".
+func (m *StateManager) FinalizeReservation(transactionID, finalStatus string) {
+	m.cityDataMux.Lock()
+	defer m.cityDataMux.Unlock()
+
+	found := false
+	for i, res := range m.cityData.ActiveReservations {
+		if res.TransactionID == transactionID {
+			log.Printf("[StateManager-%s] TX[%s]: Reserva encontrada, mudando status de '%s' para '%s'.", m.ownedCity, transactionID, res.Status, finalStatus)
+			m.cityData.ActiveReservations[i].Status = finalStatus
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		log.Printf("[StateManager-%s] TX[%s]: AVISO FinalizeReservation - Nenhuma reserva encontrada para este TransactionID.", m.ownedCity, transactionID)
+	}
+	// Para o futuro: Você pode querer adicionar uma outra rotina de limpeza que remove
+	// reservas no estado "charged" ou "aborted" após algum tempo (ex: 24 horas) para não
+	// manter a memória a crescer indefinidamente.
+}
+
+func (m *StateManager) StartCoordinatingTransaction(txID, vehicleID string, route []schemas.RouteSegment) {
+	m.cityDataMux.Lock()
+	defer m.cityDataMux.Unlock()
+
+	if _, exists := m.CoordinatedTransactions[txID]; exists {
+		return // Já está a ser rastreada
+	}
+
+	m.CoordinatedTransactions[txID] = &TransactionProgress{
+		TotalSegments:     len(route),
+		CompletedSegments: make(map[string]schemas.CostUpdatePayload),
+		VehicleID:         vehicleID,
+	}
+	log.Printf("[StateManager-%s] TX[%s]: Começando a coordenar transação com %d segmentos.", m.ownedCity, txID, len(route))
+}
+
+func (m *StateManager) RecordSegmentCompletion(payload schemas.CostUpdatePayload) (bool, float64) {
+	txProgress, exists := m.CoordinatedTransactions[payload.TransactionID]
+	if !exists {
+		return false, 0 // Não sou o coordenador desta transação
+	}
+
+	txProgress.mu.Lock()
+	defer txProgress.mu.Unlock()
+
+	// Evita processar o mesmo segmento duas vezes
+	if _, done := txProgress.CompletedSegments[payload.SegmentCity]; done {
+		return false, 0
+	}
+
+	txProgress.CompletedSegments[payload.SegmentCity] = payload
+	log.Printf("[StateManager-%s] TX[%s]: Registado segmento completo de '%s'. (%d/%d)", m.enterpriseName, payload.TransactionID, payload.SegmentCity, len(txProgress.CompletedSegments), txProgress.TotalSegments)
+
+	// Verifica se todos os segmentos estão completos
+	if len(txProgress.CompletedSegments) == txProgress.TotalSegments {
+		var totalCost float64
+		for _, p := range txProgress.CompletedSegments {
+			totalCost += p.Cost
+		}
+		log.Printf("[StateManager-%s] TX[%s]: TODOS OS SEGMENTOS COMPLETOS! Custo total: %.2f", m.enterpriseName, payload.TransactionID, totalCost)
+		return true, totalCost
+	}
+
+	return false, 0
 }

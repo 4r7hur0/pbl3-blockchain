@@ -28,7 +28,7 @@ var (
 	stateMgr        *state.StateManager
 	allSystemCities []string
 	registryClient  *rc.RegistryClient // Cliente do Registry
-	myAPIURL string
+	myAPIURL        string
 	cpWorkerIDs     []string // IDs dos Charging Point Workers registrados nesta API
 )
 
@@ -56,7 +56,7 @@ func main() {
 	}
 
 	postsQuantity = len(cpWorkerIDs) // A quantidade de postos é o tamanho da lista
-	
+
 	log.Printf("Iniciando API para a empresa: %s na porta %s, gerenciando a cidade: %s com %d postos.", enterpriseName, enterprisePort, ownedCity, postsQuantity)
 
 	myAPIURL = fmt.Sprintf("http://%v:%s", enterpriseName, enterprisePort) // Ajuste se estiver atrás de um proxy ou em rede Docker diferente
@@ -64,7 +64,6 @@ func main() {
 	// Inicializar o StateManager APENAS para a cidade que esta API possui
 	stateMgr = state.NewStateManager(ownedCity, postsQuantity, myAPIURL, cpWorkerIDs)
 
-	
 	// Inicializar e usar o Registry Client
 	registryClient = rc.NewRegistryClient(registryURL)
 
@@ -149,7 +148,7 @@ func main() {
 	}()
 
 	// Goroutine para processar a rota escolhida pelo carro
-	go func() {	
+	go func() {
 		for messagePayload := range chosenRouteMessageChannel {
 			transactionID := uuid.New().String()
 
@@ -298,12 +297,13 @@ func main() {
 					_, err = contract.SubmitTransaction("RegisterReserve", transactionID, chosenRoute.VehicleID, string(routeJSON))
 					if err != nil {
 						log.Printf("[%s] TX[%s]: ERRO - Falha ao submeter 'RegisterReserve' na blockchain: %v", enterpriseName, transactionID, err)
-				} else {
-					log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
+					} else {
+						log.Printf("[%s] TX[%s]: SUCESSO - Transação registrada na blockchain.", enterpriseName, transactionID)
+						stateMgr.StartCoordinatingTransaction(transactionID, chosenRoute.VehicleID, chosenRoute.Route)
+					}
 				}
-			}
-			publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
-		} else {
+				publishReservationStatus(chosenRoute.VehicleID, transactionID, "CONFIRMED", "Reserva confirmada com sucesso", &chosenRoute, enterpriseName)
+			} else {
 				log.Printf("[%s] TX[%s]: FASE DE PREPARAÇÃO GLOBAL FALHOU. Iniciando ABORT.", enterpriseName, transactionID)
 				for city, participantTypeOrURL := range preparedParticipants { // Abortar apenas os que foram preparados
 					if participantTypeOrURL == "local" {
@@ -330,14 +330,6 @@ func main() {
 		}
 	}()
 
-	// Goroutine para verificar e encerrar reservas
-	go func() {
-		ticker := time.NewTicker(10 * time.Second) // Verificar a cada 10 segundos
-		defer ticker.Stop()
-		for range ticker.C {
-			stateMgr.CheckAndEndReservations()
-		}
-	}()
 	setupWorkerEventListener(stateMgr, enterpriseName, ownedCity)
 	// Configurar e iniciar o servidor Gin (HTTP)
 	r := gin.Default()
@@ -360,6 +352,10 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 			"max_posts":           maxP,
 			"active_reservations": activeR,
 		})
+	})
+
+	r.POST("/report-segment-completion", func(c *gin.Context) {
+		handleSegmentCompletion(c, sm, entName)
 	})
 
 	r.POST("/cost-update", func(c *gin.Context) {
@@ -386,6 +382,50 @@ func setupRouter(r *gin.Engine, sm *state.StateManager, entName string) {
 }
 
 // Handlers para os endpoints /2pc_remote/* (podem ficar aqui ou em um arquivo separado)
+
+func handleSegmentCompletion(c *gin.Context, sm *state.StateManager, localEntName string) {
+	var payload schemas.CostUpdatePayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "payload inválido", "details": err.Error()})
+		return
+	}
+
+	log.Printf("[%s] TX[%s]: Recebido relatório de conclusão do segmento '%s'", localEntName, payload.TransactionID, payload.SegmentCity)
+
+	// Grava o progresso e verifica se a transação terminou
+	allDone, totalCost := sm.RecordSegmentCompletion(payload)
+
+	if allDone {
+		log.Printf("[%s] TX[%s]: Transação completa. A submeter o estado final à blockchain...", localEntName, payload.TransactionID)
+
+		// Se tudo terminou, chama EndCharging com os totais
+		costStr := fmt.Sprintf("%.2f", totalCost)
+		energyConsumedStr := "0.0" // Pode calcular a energia total se a tiver
+
+		gw, err := newGateway()
+		if err != nil {
+			log.Printf("[%s] TX[%s]: ERRO FINAL ao conectar ao Gateway para 'EndCharging': %v", localEntName, payload.TransactionID, err)
+			// Informa que o relatório foi recebido, mas o coordenador teve um problema interno.
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "segment report received, but coordinator failed to contact blockchain"})
+			return
+		}
+		defer gw.Close()
+
+		network := gw.GetNetwork(fabricChannelName)
+		contract := network.GetContract(fabricChaincodeName)
+
+		_, err = contract.SubmitTransaction("EndCharging", payload.TransactionID, costStr, energyConsumedStr)
+		if err != nil {
+			log.Printf("[%s] TX[%s]: ERRO FINAL ao submeter 'EndCharging': %v", localEntName, payload.TransactionID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "falha ao finalizar transação na blockchain", "details": err.Error()})
+			return
+		} else {
+			log.Printf("[%s] TX[%s]: SUCESSO FINAL. Transação finalizada na blockchain.", localEntName, payload.TransactionID)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "segment report received"})
+}
 
 // handlePing invoca a função Ping do chaincode para escrever no ledger.
 func handlePing(c *gin.Context) {
@@ -549,15 +589,14 @@ func handleCostUpdate(c *gin.Context, localEntName string) {
 	energyConsumedStr := "0.0"
 
 	// Chama a função correta do novo smart contract: EndCharging
-	log.Printf("[%s] TX[%s]: Submetendo 'EndCharging' na blockchain com Custo: %s, Energia Consumida: %s", localEntName, payload.TransactionID, costStr, energyConsumedStr)
-	_, err = contract.SubmitTransaction("EndCharging", payload.TransactionID, costStr, energyConsumedStr)
+	log.Printf("[%s] TX[%s]: Submetendo 'UpdateChargingSegment' na blockchain com Custo: %s, Energia Consumida: %s", localEntName, payload.TransactionID, costStr, energyConsumedStr)
+	_, err = contract.SubmitTransaction("UpdateChargingSegment", payload.TransactionID, costStr, energyConsumedStr)
 	if err != nil {
 		log.Printf("[%s] TX[%s]: ERRO ao submeter 'EndCharging' na blockchain: %v", localEntName, payload.TransactionID, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Falha ao finalizar recarga na blockchain", "details": err.Error()})
 		return
 	}
 }
-
 
 func handleRemoteCommit(c *gin.Context, sm *state.StateManager, localEntName string) {
 	var req schemas.RemoteCommitAbortRequest
@@ -601,63 +640,85 @@ func publishReservationStatus(vehicleID, transactionID, status, message string, 
 
 // Função para escutar eventos dos ChargingPointWorkers e acionar o cost-update
 func setupWorkerEventListener(sm *state.StateManager, enterpriseName, ownedCity string) {
-    eventTopic := fmt.Sprintf("enterprise/%s/cp/+/event", enterpriseName)
-    eventChan := mqtt.StartListening(eventTopic, 10)
-    go func() {
-        for payload := range eventChan {
-            var event map[string]interface{}
-            if err := json.Unmarshal([]byte(payload), &event); err != nil {
-                log.Printf("Erro ao decodificar evento do worker: %v", err)
-                continue
-            }
-            if event["command"] == "VEHICLE_PASSED_AND_CHARGED" {
-                transactionID, _ := event["transaction_id"].(string)
-                cost, _ := event["cost"].(float64)
-                // Se o worker enviar a cidade, use-a. Senão, use ownedCity.
-                segmentCity := ownedCity
-                if city, ok := event["city"].(string); ok && city != "" {
-                    segmentCity = city
-                }
+	eventTopic := fmt.Sprintf("enterprise/%s/cp/+/event", enterpriseName)
+	eventChan := mqtt.StartListening(eventTopic, 10)
 
-                // Descobrir se sou coordenador da transação
-                isCoordinator := sm.IsCoordinator(transactionID)
-                costPayload := schemas.CostUpdatePayload{
-                    TransactionID: transactionID,
-                    SegmentCity:   segmentCity,
-                    Cost:          cost,
-                }
+	go func() {
+		for payload := range eventChan {
+			var event map[string]interface{}
+			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+				log.Printf("Erro ao decodificar evento do worker: %v", err)
+				continue
+			}
 
-                // Descobrir URL do coordenador se não for eu
-                var costUpdateURL string
-                if isCoordinator {
-                     costUpdateURL = fmt.Sprintf("%s/cost-update", myAPIURL) 
-                } else {
-                    // Descobrir coordenador pelo registry (ou pelo state, se você salvar o CoordinatorURL)
-                    coordinatorURL, found := sm.GetCoordinatorURL(transactionID)
+			if event["command"] == "VEHICLE_PASSED_AND_CHARGED" {
+				transactionID, _ := event["transaction_id"].(string)
+				cost, _ := event["cost"].(float64)
+
+				isCoordinator := sm.IsCoordinator(transactionID)
+
+				costPayload := schemas.CostUpdatePayload{
+					TransactionID: transactionID,
+					SegmentCity:   ownedCity, // A cidade deste segmento é a cidade que esta API gerencia
+					Cost:          cost,
+				}
+
+				if isCoordinator {
+					// Se sou o coordenador, processo o evento localmente
+					handleSegmentCompletionLocal(sm, enterpriseName, costPayload)
+				} else {
+					// Se não sou o coordenador, reporto para a URL do coordenador
+					coordinatorURL, found := sm.GetCoordinatorURL(transactionID)
 					if !found || coordinatorURL == "" {
-						log.Printf("[%s] TX[%s]: Não foi possível determinar o coordenador para cost-update.", enterpriseName, transactionID)
+						log.Printf("[%s] TX[%s]: PARTICIPANTE - Não foi possível determinar o coordenador para reportar conclusão.", enterpriseName, transactionID)
 						continue
 					}
-					costUpdateURL = fmt.Sprintf("%s/cost-update", coordinatorURL)
-                }
 
-                // Chama o endpoint /cost-update (POST)
-                go func() {
-                    body, _ := json.Marshal(costPayload)
-                    resp, err := http.Post(costUpdateURL, "application/json", bytes.NewBuffer(body))
-                    if err != nil {
-                        log.Printf("[%s] TX[%s]: Falha ao chamar /cost-update em %s: %v", enterpriseName, transactionID, costUpdateURL, err)
-                        return
-                    }
-                    defer resp.Body.Close()
-                    if resp.StatusCode != http.StatusOK {
-                        respBody, _ := io.ReadAll(resp.Body)
-                        log.Printf("[%s] TX[%s]: /cost-update retornou status %d: %s", enterpriseName, transactionID, resp.StatusCode, string(respBody))
-                    } else {
-                        log.Printf("[%s] TX[%s]: /cost-update chamado com sucesso em %s", enterpriseName, transactionID, costUpdateURL)
-                    }
-                }()
-            }
-        }
-    }()
+					go func() {
+						reportURL := fmt.Sprintf("%s/report-segment-completion", coordinatorURL)
+						body, _ := json.Marshal(costPayload)
+						resp, err := http.Post(reportURL, "application/json", bytes.NewBuffer(body))
+						if err != nil {
+							log.Printf("[%s] TX[%s]: Falha ao reportar conclusão para %s: %v", enterpriseName, transactionID, reportURL, err)
+							return
+						}
+						defer resp.Body.Close()
+						if resp.StatusCode != http.StatusOK {
+							log.Printf("[%s] TX[%s]: Coordenador retornou status %d ao reportar conclusão.", enterpriseName, transactionID, resp.StatusCode)
+						} else {
+							log.Printf("[%s] TX[%s]: Conclusão do segmento reportada com sucesso ao coordenador.", enterpriseName, transactionID)
+						}
+					}()
+				}
+			}
+		}
+	}()
+}
+
+func handleSegmentCompletionLocal(sm *state.StateManager, localEntName string, payload schemas.CostUpdatePayload) {
+	log.Printf("[%s] TX[%s]: Recebido relatório de conclusão do segmento LOCAL '%s'", localEntName, payload.TransactionID, payload.SegmentCity)
+	allDone, totalCost := sm.RecordSegmentCompletion(payload)
+
+	if allDone {
+		log.Printf("[%s] TX[%s]: Transação completa (via evento local). A submeter o estado final à blockchain...", localEntName, payload.TransactionID)
+		costStr := fmt.Sprintf("%.2f", totalCost)
+		energyConsumedStr := "0.0"
+
+		gw, err := newGateway()
+		if err != nil {
+			log.Printf("[%s] TX[%s]: ERRO (LOCAL) ao conectar ao Gateway para 'EndCharging': %v", localEntName, payload.TransactionID, err)
+			return
+		}
+		defer gw.Close()
+
+		network := gw.GetNetwork(fabricChannelName)
+		contract := network.GetContract(fabricChaincodeName)
+
+		_, err = contract.SubmitTransaction("EndCharging", payload.TransactionID, costStr, energyConsumedStr)
+		if err != nil {
+			log.Printf("[%s] TX[%s]: ERRO (LOCAL) ao submeter 'EndCharging': %v", localEntName, payload.TransactionID, err)
+		} else {
+			log.Printf("[%s] TX[%s]: SUCESSO (LOCAL). Transação finalizada na blockchain.", localEntName, payload.TransactionID)
+		}
+	}
 }

@@ -16,7 +16,7 @@ services:
     networks:
       - fabric_test_net # Conecta o serviço à rede da Fabric
     volumes:
-      - /home/tec502/pbl3-blockchain/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - /home/user/pbl3-blockchain/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
 
   registry:
     build:
@@ -50,7 +50,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - /home/tec502/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations 
+      - /home/user/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations 
     networks:
       - fabric_test_net
 
@@ -76,7 +76,7 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - /home/tec502/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations
+      - /home/user/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 
@@ -102,7 +102,7 @@ services:
     ports:
       - "8083:8083"
     volumes:
-      - /home/tec502/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations
+      - /home/user/fabric-samples/test-network/organizations:/etc/hyperledger/fabric/organizations
     networks:
       - fabric_test_net
 

@@ -120,9 +120,9 @@ type ActiveReservation struct {
 	RequestID         string            `json:"request_id"`
 	City              string            `json:"city"`
 	ReservationWindow ReservationWindow `json:"reservation_window"`
-	Status            string            `json:"status"` // Ex: "PREPARED", "COMMITTED"
-	CoordinatorURL    string            `json:"-"`      // URL do coordenador, não precisa ser exposto no JSON de status.
-	WorkerID		 string            `json:"worker_id"` // ID do worker que processou a reserva
+	Status            string            `json:"status"`    // Ex: "PREPARED", "COMMITTED"
+	CoordinatorURL    string            `json:"-"`         // URL do coordenador, não precisa ser exposto no JSON de status.
+	WorkerID          string            `json:"worker_id"` // ID do worker que processou a reserva
 }
 
 // TransactionState representa o estado de uma transação na Blockchain.

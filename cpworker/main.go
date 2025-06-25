@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync" // 1. Importe o pacote sync
+	"sync"
 	"time"
 
 	"github.com/4r7hur0/PBL-2/api/mqtt"
@@ -53,7 +53,7 @@ func (cpw *ChargingPointWorker) handleMQTTMessage(payload string) {
 		b, _ := json.Marshal(msg["window"])
 		json.Unmarshal(b, &window)
 		txID, _ := msg["transaction_id"].(string)
-		
+
 		responseTopic, rt_ok := msg["response_topic"].(string)
 		if !rt_ok {
 			log.Printf("ERRO: Mensagem PREPARE_RESERVE_WINDOW sem response_topic. TX: %s", txID)
@@ -116,7 +116,6 @@ func (cpw *ChargingPointWorker) handleMQTTMessage(payload string) {
 		cpw.mu.Unlock()
 	}
 }
-
 
 // Rotina para detectar passagem do tempo e cobrar
 func (cpw *ChargingPointWorker) monitorPassageAndCharge() {
