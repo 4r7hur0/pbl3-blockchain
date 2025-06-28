@@ -1,129 +1,164 @@
-# PBL3-Blockchain
+# pbl3-blockchain
 
-## Descrição do Projeto
+Este projeto implementa uma arquitetura blockchain utilizando Hyperledger Fabric, com chaincode desenvolvido em Go. O objetivo é fornecer uma infraestrutura robusta para aplicações descentralizadas, facilitando a automação de processos e a segurança de transações em ambientes permissionados.
 
-Este projeto simula um sistema distribuído de recarga de veículos elétricos, utilizando múltiplos serviços (empresas), um registry para descoberta de serviços e comunicação via MQTT (Mosquitto). O ambiente é orquestrado com Docker e Docker Compose, utilizando uma rede overlay para integração dos containers.
+## Índice
 
-## Pré-requisitos
-- Go 1.24 ou superior
-- Docker e Docker Compose
-
-## 1. Criando a rede overlay
-A rede overlay permite que múltiplos containers, possivelmente em diferentes hosts (ou no mesmo host), se comuniquem de forma segura e isolada. É fundamental para a integração dos serviços deste projeto.
-
-### O que é uma rede overlay?
-Uma rede overlay do Docker conecta containers em diferentes máquinas (ou no mesmo host) como se estivessem na mesma rede local. É ideal para sistemas distribuídos e microserviços.
-
-### Como criar a rede overlay
-Execute o comando abaixo **apenas uma vez** (a rede persiste até ser removida):
-
-```bash
-docker network create --driver overlay --attachable rede-overlay
-```
-
-- `--driver overlay`: define o tipo da rede.
-- `--attachable`: permite que containers standalone (não orquestrados por Swarm) se conectem à rede.
-- `rede-overlay`: nome da rede (pode ser alterado, mas mantenha igual em todos os comandos do projeto).
-
-### Como verificar se a rede já existe
-```bash
-docker network ls
-```
-Procure por `rede-overlay` na lista.
-
-### Como remover a rede overlay (caso precise recriar)
-```bash
-docker network rm rede-overlay
-```
-
-### Dicas
-- Sempre use o mesmo nome de rede nos comandos de execução dos containers.
-- Se estiver usando Docker Swarm, inicialize com `docker swarm init` antes de criar a rede overlay.
-- Para ambientes locais, o parâmetro `--attachable` é suficiente.
-
-## 2. Rodando o Mosquitto (Broker MQTT)
-O Mosquitto é necessário para a comunicação MQTT entre os serviços. Execute:
-
-```bash
-docker run -d --name mosquitto --network rede-overlay -p 1883:1883 -v /home/tec502/PBL-2/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf eclipse-mosquitto
-```
-
-> **Atenção:** Verifique se o caminho do arquivo `mosquitto.conf` está correto.
-
-## 3. Rodando o Registry
-O registry é responsável por registrar e localizar as APIs das empresas.
-
-### Build do container Registry:
-```bash
-docker build -f registry/Dockerfile -t registry .
-```
-
-### Executando o Registry:
-```bash
-docker run -d --name registry --network rede-overlay -p 9000:9000 registry
-```
-
-## 4. Rodando as APIs das Empresas
-Cada empresa deve ser executada em um terminal/container diferente, sempre na mesma rede overlay.
-
-### Build do container da API:
-```bash
-docker build -f api/Dockerfile -t api .
-```
-
-### Executando uma empresa (exemplo):
-```bash
-docker run -d \
-  --name SolAtlantico \
-  --network rede-overlay \
-  -p 8080:8080 \
-  -e ENTERPRISE_NAME=SolAtlantico \
-  -e ENTERPRISE_PORT=8080 \
-  -e OWNED_CITY=Salvador \
-  -e POSTS_QUANTITY=2 \
-  -e REGISTRY_URL="http://registry:9000" \
-  api
-```
-
-Repita o comando acima para cada empresa, alterando os valores das variáveis de ambiente e o nome do container. Exemplos:
-
-```bash
-docker run -d --name SertaoCarga --network rede-overlay -p 8081:8081 \
-  -e ENTERPRISE_NAME=SertaoCarga \
-  -e ENTERPRISE_PORT=8081 \
-  -e OWNED_CITY="Feira de Santana" \
-  -e POSTS_QUANTITY=5 \
-  -e REGISTRY_URL="http://registry:9000" \
-  api
-
-docker run -d --name CacauPower --network rede-overlay -p 8083:8083 \
-  -e ENTERPRISE_NAME=CacauPower \
-  -e ENTERPRISE_PORT=8083 \
-  -e OWNED_CITY=Ilheus \
-  -e POSTS_QUANTITY=2 \
-  -e REGISTRY_URL="http://registry:9000" \
-  api
-```
-
-## 5. Executando os carros e o listEnterprises
-Para rodar os carros e o serviço de listagem de empresas, utilize o Docker Compose:
-
-```bash
-docker compose up --build
-```
-
-Conecte o container do Mosquitto à rede bridge:
-```bash
-docker network connect nome-da-rede-bridge mosquitto
-```
-
-## Observações Importantes
-- Sempre utilize a mesma rede overlay para todos os containers.
-- O registry deve estar rodando antes das empresas.
-- Cada empresa deve ser instanciada em um container separado.
-- Verifique as portas para evitar conflitos.
-- O Mosquitto deve estar acessível para todos os serviços.
+- [Requisitos](#requisitos)
+- [Instalação do Hyperledger Fabric](#instalação-do-hyperledger-fabric)
+- [Inicialização da Rede Hyperledger (teste-network)](#inicialização-da-rede-hyperledger-teste-network)
+- [Deploy do Chaincode com deployCC](#deploy-do-chaincode-com-deploycc)
+- [Executando a Blockchain com Docker Compose](#executando-a-blockchain-com-docker-compose)
+- [Executando as APIs e Serviços com Docker Compose](#executando-as-apis-e-serviços-com-docker-compose)
+- [Atenção aos Diretórios](#atenção-aos-diretórios)
+- [Referências](#referências)
 
 ---
 
-Em caso de dúvidas, consulte os arquivos do projeto ou abra uma issue.
+## Requisitos
+
+Antes de começar, certifique-se de ter os seguintes itens instalados em seu ambiente:
+
+- [Go (Golang)](https://go.dev/dl/) (versão recomendada: 1.20 ou superior)
+- [Docker](https://docs.docker.com/get-docker/)
+- [Docker Compose](https://docs.docker.com/compose/install/)
+- [Git](https://git-scm.com/)
+- `curl` (opcional, para baixar dependências)
+- Hyperledger Fabric Binaries e Docker Images
+
+---
+
+## Instalação do Hyperledger Fabric
+
+Para rodar este projeto, é necessário baixar as ferramentas e imagens do Hyperledger Fabric. Execute os comandos abaixo em um terminal:
+
+```bash
+# Clone o repositório do fabric-samples (ele contém scripts úteis)
+git clone https://github.com/hyperledger/fabric-samples.git
+
+# Entre na pasta fabric-samples e rode o script bootstrap (ajuste a versão conforme necessário)
+cd fabric-samples
+curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.2.0 1.5.2
+```
+
+> **Nota:** O script `bootstrap` fará o download dos binários (`peer`, `orderer`, `configtxgen`, etc.) e das imagens Docker necessárias. Certifique-se de ter permissão para executar scripts shell.
+
+---
+
+## Inicialização da Rede Hyperledger (teste-network)
+
+O Hyperledger Fabric inclui uma rede de teste chamada `test-network` que facilita a criação de uma infraestrutura blockchain local para desenvolvimento e testes.
+
+### Passos para inicializar a rede:
+
+1. **Acesse o diretório da test-network:**
+
+   ```bash
+   cd fabric-samples/test-network
+   ```
+
+2. **Suba a rede, crie um canal e utilize o Certificate Authority (CA):**
+
+   ```bash
+   ./network.sh up createChannel -ca
+   ```
+
+   - Este comando irá:
+     - Inicializar os containers necessários (orderers, peers, CA, CouchDB, etc).
+     - Criar um canal padrão chamado `mychannel` (pode ser alterado com o parâmetro `-c`).
+     - Utilizar o CA para emissão dos certificados dos participantes.
+
+> **Atenção:** Execute o comando acima sempre a partir do diretório `test-network`. Certifique-se de que os diretórios de artefatos e volumes estejam corretamente criados.
+
+---
+
+## Deploy do Chaincode utilizando o deployCC
+
+Após a rede estar rodando, faça o deploy do chaincode (smart contract) utilizando o comando abaixo:
+
+```bash
+./network.sh deployCC -ccn pbl3 -ccp caminho/para/pbl3-blockchain/chaincode/ -ccl go
+```
+- `-ccn` define o nome do chaincode (aqui usamos `pbl3`).
+- `-ccp` deve apontar para o caminho do diretório do seu chaincode (por exemplo: `/home/usuario/repos/pbl3-blockchain/chaincode/`).
+- `-ccl` define a linguagem utilizada (neste projeto, `go`).
+
+> **Importante:**  
+> - O caminho passado em `-ccp` deve ser absoluto ou relativo ao diretório onde o comando está sendo executado (`test-network`).  
+> - Se o diretório estiver incorreto, o deploy irá falhar.  
+> - Sempre verifique se está no diretório correto antes de executar os scripts!
+
+---
+
+## Executando a Blockchain com Docker Compose
+
+A test-network já utiliza internamente um arquivo `docker-compose` para subir todos os containers necessários do Hyperledger Fabric (orderers, peers, CA, CouchDB, etc).  
+Se precisar subir ou verificar os containers manualmente, utilize:
+
+```bash
+docker ps -a
+```
+
+Para verificar os logs dos serviços:
+
+```bash
+docker-compose logs -f
+```
+
+> **Observação:** Os containers de blockchain devem estar rodando antes de subir suas APIs ou outros serviços que dependam da rede Fabric.
+
+---
+
+## Executando as APIs e Serviços com Docker Compose
+
+Além dos containers da blockchain, este projeto inclui containers adicionais (por exemplo, APIs, frontends, serviços auxiliares) definidos em um ou mais arquivos `docker-compose.yml` próprios do projeto.
+
+### Como executar suas APIs e serviços:
+
+1. **Verifique o arquivo `docker-compose.yml` do seu projeto:**
+   - Ele normalmente está na raiz do repositório ou em uma pasta específica para infraestrutura/deployment.
+
+2. **Atenção aos diretórios mapeados:**
+   - Certifique-se de que os volumes e caminhos utilizados no `docker-compose.yml` apontam para os diretórios corretos do seu projeto.  
+   - Por exemplo, diretórios de código, arquivos de configuração, chaves ou certificados.  
+   - Se rodar o comando em um subdiretório, os caminhos relativos podem não funcionar.
+
+3. **Suba os containers:**
+   ```bash
+   docker-compose up -d
+   ```
+   ou, caso o arquivo esteja em outro diretório:
+   ```bash
+   docker-compose -f caminho/para/docker-compose.yml up -d
+   ```
+
+4. **Verifique os logs para garantir que as APIs subiram corretamente:**
+   ```bash
+   docker-compose logs -f
+   ```
+
+> **Atenção:**  
+> - Sempre execute o `docker-compose` a partir do diretório correto para evitar problemas com caminhos relativos de volumes.  
+> - Se suas APIs dependem da blockchain, garanta que a test-network já está rodando antes.  
+> - Se alterar a localização dos diretórios, ajuste os volumes no `docker-compose.yml` correspondente.
+
+---
+
+## Atenção aos Diretórios
+
+- **Mantenha a estrutura de diretórios padrão** tanto da Hyperledger Fabric quanto do seu projeto para evitar erros nos scripts e deploy.
+- **Execute os scripts SEMPRE a partir do diretório correto** (`test-network` para comandos de rede e deploy da Fabric, raiz do projeto para APIs).
+- **Verifique os caminhos absolutos e relativos** nos arquivos de configuração (`docker-compose.yml`, scripts, configs), principalmente se estiver rodando comandos a partir de subdiretórios.
+- **Em caso de erros, confira se os diretórios e caminhos informados existem e têm permissão de acesso**.
+
+---
+
+## Referências
+
+- [Documentação do Hyperledger Fabric](https://hyperledger-fabric.readthedocs.io/)
+- [Fabric Samples no GitHub](https://github.com/hyperledger/fabric-samples)
+- [Guia oficial do Docker Compose](https://docs.docker.com/compose/)
+
+---
+
+Caso tenha dúvidas ou encontre problemas, abra uma issue neste repositório!
